@@ -108,16 +108,18 @@ const extractExecutionFlags = (rawArgs: string): { args: string; bg: boolean; fo
 	return { args, bg, fork };
 };
 
+const resolveCompletionCwd = (state: SubagentState): string => state.baseCwd || process.cwd();
+
 const makeAgentCompletions = (state: SubagentState) => (prefix: string) => {
-	if (!state.baseCwd || prefix.includes(" ")) return null;
-	return discoverAgents(state.baseCwd, "both").agents
+	if (prefix.includes(" ")) return null;
+	return discoverAgents(resolveCompletionCwd(state), "both").agents
 		.filter((agent) => agent.name.startsWith(prefix))
 		.map((agent) => ({ value: agent.name, label: agent.name }));
 };
 
 const makeChainCompletions = (state: SubagentState) => (prefix: string) => {
-	if (!state.baseCwd || prefix.includes(" ")) return null;
-	const { chains } = discoverAgentsAll(state.baseCwd);
+	if (prefix.includes(" ")) return null;
+	const { chains } = discoverAgentsAll(resolveCompletionCwd(state));
 	return chains
 		.filter((chain) => chain.name.startsWith(prefix))
 		.map((chain) => ({ value: chain.name, label: chain.name }));

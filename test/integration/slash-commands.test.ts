@@ -824,6 +824,43 @@ Inspect
 		});
 	});
 
+	it("/run completions work before session_start sets baseCwd", async () => {
+		await withTempProject("pi-run-pre-session-completions-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "agents", "code-analysis.scout.md"), `---\nname: scout\npackage: code-analysis\ndescription: Fast recon\n---\n\nInspect\n`, "utf-8");
+			fs.writeFileSync(path.join(root, ".pi", "chains", "recon-plan.chain.md"), `---\nname: recon-plan\ndescription: Recon\n---\n\n## scout\ntask: Do recon\n`, "utf-8");
+
+			await withIsolatedHome(async () => {
+				const previousCwd = process.cwd();
+				process.chdir(root);
+				try {
+					const commands = new Map<string, RegisteredSlashCommand>();
+					const preSessionState = createState("");
+					registerSlashCommands!({
+						events: createEventBus(),
+						registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+						registerShortcut() {},
+						sendMessage() {},
+					} as never, preSessionState);
+
+					// baseCwd is still empty (session_start hasn't fired yet).
+					assert.equal(preSessionState.baseCwd, "");
+
+					// Completions should fall back to process.cwd() and still find agents.
+					const runCompletions = commands.get("run")!.getArgumentCompletions!("code-") as Array<{ value: string }> | null;
+					assert.ok(Array.isArray(runCompletions), "expected /run completions to be an array, not null");
+					assert.deepEqual(runCompletions!.map(({ value }) => value), ["code-analysis.scout"]);
+
+					// /run-chain completions should also fall back.
+					const chainCompletions = commands.get("run-chain")!.getArgumentCompletions!("recon") as Array<{ value: string }> | null;
+					assert.ok(Array.isArray(chainCompletions), "expected /run-chain completions to be an array, not null");
+					assert.deepEqual(chainCompletions!.map(({ value }) => value), ["recon-plan"]);
+				} finally {
+					process.chdir(previousCwd);
+				}
+			});
+		});
+	});
+
 	it("does not register legacy orchestration commands", async () => {
 		const commands = new Map<string, unknown>();
 		registerSlashCommands!({
