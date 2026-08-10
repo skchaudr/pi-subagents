@@ -31,8 +31,26 @@ In `~/.pi/agent/settings.json` (user) or the project config settings file (`.pi/
 For one run, put the override in the command:
 
 ```text
+/run reviewer[model=anthropic/claude-sonnet-4] "Review this diff"
+```
+
+Set a thinking level for one run without changing the model:
+
+```text
+/run reviewer[model=anthropic/claude-sonnet-4,thinking=high] "Review this diff"
+/run scout[thinking=low] "Quick lookup"
+/run worker[thinking=false] "Mechanical edit"
+```
+
+`thinking` accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `false`. Invalid values are silently ignored so typos do not block a run.
+
+You can also use the `:level` suffix on the model string, which Pi resolves natively:
+
+```text
 /run reviewer[model=anthropic/claude-sonnet-4:high] "Review this diff"
 ```
+
+Use the `thinking` field when you want to change the thinking level without changing the model, or when the model string is already long.
 
 For a persistent role override with a backup model for provider failures:
 

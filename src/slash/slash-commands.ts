@@ -52,8 +52,11 @@ interface InlineConfig {
 	outputMode?: "inline" | "file-only";
 	reads?: string[] | false;
 	model?: string;
+	thinking?: string | false;
 	skill?: string[] | false;
 }
+
+const thinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 const parseInlineConfig = (raw: string): InlineConfig => {
 	const config: InlineConfig = {};
@@ -69,6 +72,7 @@ const parseInlineConfig = (raw: string): InlineConfig => {
 			case "outputMode": if (val === "inline" || val === "file-only") config.outputMode = val; break;
 			case "reads": config.reads = val === "false" ? false : val.split("+").filter(Boolean); break;
 			case "model": config.model = val || undefined; break;
+			case "thinking": if (val === "false") config.thinking = false; else if (thinkingLevels.has(val)) config.thinking = val; break;
 			case "skill": case "skills": config.skill = val === "false" ? false : val.split("+").filter(Boolean); break;
 		}
 	}
@@ -657,7 +661,7 @@ export function registerSlashCommands(
 	});
 
 	pi.registerCommand("run", {
-		description: "Run one subagent through workflowScript: /run agent[output=file] [task] [--bg] [--fork]",
+		description: "Run one subagent: /run agent[model=...,thinking=high] [task] [--bg] [--fork]",
 		getArgumentCompletions: makeAgentCompletions(state),
 		handler: async (args, ctx) => {
 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
@@ -680,6 +684,7 @@ export function registerSlashCommands(
 			if (inline.outputMode !== undefined) child.outputMode = inline.outputMode;
 			if (inline.skill !== undefined) child.skill = inline.skill;
 			if (inline.model) child.model = inline.model;
+			if (inline.thinking !== undefined) child.thinking = inline.thinking;
 			if (fork) child.context = "fork";
 			launchSlashSubagent(pi, ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
 		},

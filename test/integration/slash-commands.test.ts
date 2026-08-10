@@ -765,6 +765,23 @@ Inspect
 		});
 	});
 
+	it("/run passes thinking inline config to the child params", async () => {
+		const result = await captureSlashCommandParams("run", "scout[model=anthropic/claude-sonnet-4,thinking=high] inspect this", process.cwd());
+		assert.deepEqual(result.params, { workflowScript: 'return runs.run("run", {"agent":"scout","task":"inspect this","agentScope":"both","model":"anthropic/claude-sonnet-4","thinking":"high"})', async: false });
+		assert.deepEqual(result.notifications, []);
+	});
+
+	it("/run accepts thinking=false to disable thinking", async () => {
+		const result = await captureSlashCommandParams("run", "scout[thinking=false] quick lookup", process.cwd());
+		assert.deepEqual(result.params, { workflowScript: 'return runs.run("run", {"agent":"scout","task":"quick lookup","agentScope":"both","thinking":false})', async: false });
+	});
+
+	it("/run ignores invalid thinking level", async () => {
+		const result = await captureSlashCommandParams("run", "scout[thinking=invalid] task", process.cwd());
+		const script = (result.params as { workflowScript?: string })?.workflowScript ?? "";
+		assert.ok(!script.includes('"thinking"'), `expected no thinking in params, got: ${script}`);
+	});
+
 	it("does not register legacy orchestration commands", async () => {
 		const commands = new Map<string, unknown>();
 		registerSlashCommands!({
