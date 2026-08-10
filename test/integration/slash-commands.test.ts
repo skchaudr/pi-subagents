@@ -782,6 +782,48 @@ Inspect
 		assert.ok(!script.includes('"thinking"'), `expected no thinking in params, got: ${script}`);
 	});
 
+	it("/run-chain is registered and provides chain name completions", async () => {
+		await withTempProject("pi-run-chain-completions-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "chains", "recon-plan.chain.md"), `---\nname: recon-plan\ndescription: Recon then plan\n---\n\n## scout\ntask: Do recon\n\n## planner\ntask: Create plan\n`, "utf-8");
+			fs.writeFileSync(path.join(root, ".pi", "chains", "review-fix.chain.md"), `---\nname: review-fix\ndescription: Review then fix\n---\n\n## reviewer\ntask: Review code\n\n## worker\ntask: Fix issues\n`, "utf-8");
+
+			await withIsolatedHome(async () => {
+				const commands = new Map<string, RegisteredSlashCommand>();
+				registerSlashCommands!({
+					events: createEventBus(),
+					registerCommand(name: string, spec: RegisteredSlashCommand) { commands.set(name, spec); },
+					registerShortcut() {},
+					sendMessage() {},
+				} as never, createState(root));
+
+				assert.equal(commands.has("run-chain"), true);
+			const completions = commands.get("run-chain")!.getArgumentCompletions!("recon") as Array<{ value: string }>;
+			assert.deepEqual(completions.map(({ value }) => value), ["recon-plan"]);
+			});
+		});
+	});
+
+	it("/run-chain handler generates a workflow script for the chain", async () => {
+		await withTempProject("pi-run-chain-handler-", async (root) => {
+			fs.writeFileSync(path.join(root, ".pi", "chains", "recon-plan.chain.md"), `---\nname: recon-plan\ndescription: Recon then plan\n---\n\n## scout\ntask: Do recon\n\n## planner\ntask: Create a plan from {previous}\n`, "utf-8");
+
+			const run = await captureSlashCommandParams("run-chain", "recon-plan investigate the auth module", root);
+			const script = (run.params as { workflowScript?: string })?.workflowScript ?? "";
+			assert.ok(script.includes('runs.run'), `expected runs.run in script, got: ${script}`);
+			assert.ok(script.includes('scout'), `expected scout agent in script, got: ${script}`);
+			assert.ok(script.includes('planner'), `expected planner agent in script, got: ${script}`);
+			assert.ok(script.includes('investigate the auth module'), `expected task text in script, got: ${script}`);
+			assert.ok(script.includes('{previous}'), `expected {previous} template in script, got: ${script}`);
+		});
+	});
+
+	it("/run-chain handler notifies on unknown chain", async () => {
+		await withTempProject("pi-run-chain-unknown-", async (root) => {
+			const result = await captureSlashCommandParams("run-chain", "nonexistent-chain do something", root);
+			assert.ok(result.notifications.some((n) => n.includes("Unknown chain")), `expected unknown chain notification, got: ${result.notifications}`);
+		});
+	});
+
 	it("does not register legacy orchestration commands", async () => {
 		const commands = new Map<string, unknown>();
 		registerSlashCommands!({
@@ -792,6 +834,6 @@ Inspect
 		assert.equal(commands.has("run"), true);
 		assert.equal(commands.has("chain"), false);
 		assert.equal(commands.has("parallel"), false);
-		assert.equal(commands.has("run-chain"), false);
+		assert.equal(commands.has("run-chain"), true);
 	});
 });

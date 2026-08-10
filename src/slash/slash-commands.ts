@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, type Component, type TUI } from "@earendil-works/pi-tui";
-import { BUILTIN_AGENT_NAMES, discoverAgents } from "../agents/agents.ts";
+import { BUILTIN_AGENT_NAMES, discoverAgents, discoverAgentsAll } from "../agents/agents.ts";
 import {
 	DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS,
 	applySubagentProfile,
@@ -113,6 +113,14 @@ const makeAgentCompletions = (state: SubagentState) => (prefix: string) => {
 	return discoverAgents(state.baseCwd, "both").agents
 		.filter((agent) => agent.name.startsWith(prefix))
 		.map((agent) => ({ value: agent.name, label: agent.name }));
+};
+
+const makeChainCompletions = (state: SubagentState) => (prefix: string) => {
+	if (!state.baseCwd || prefix.includes(" ")) return null;
+	const { chains } = discoverAgentsAll(state.baseCwd);
+	return chains
+		.filter((chain) => chain.name.startsWith(prefix))
+		.map((chain) => ({ value: chain.name, label: chain.name }));
 };
 
 const makeBuiltinAgentNameCompletions = () => (prefix: string) => {
@@ -630,6 +638,40 @@ function slashRunWorkflowScript(key: string, child: Record<string, unknown>): st
 	return `return runs.run(${JSON.stringify(key)}, ${JSON.stringify(child)})`;
 }
 
+function slashChainWorkflowScript(chainName: string, chainDir: string, steps: Array<Record<string, unknown>>, task: string): string {
+	const taskJson = JSON.stringify(task);
+	const chainDirJson = JSON.stringify(chainDir);
+	const lines: string[] = [`let previous = "";`, `let task = ${taskJson};`, `let chain_dir = ${chainDirJson};`];
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i]!;
+		if (step.checkpoint) continue;
+		if (Array.isArray(step.parallel)) {
+			const items = (step.parallel as Array<Record<string, unknown>>).map((p, j) => {
+				const child: Record<string, unknown> = { agent: p.agent ?? "delegate" };
+				if (p.model) child.model = p.model;
+				if (p.skill !== undefined) child.skill = p.skill;
+				if (p.context) child.context = p.context;
+				if (p.cwd) child.cwd = p.cwd;
+				const t = JSON.stringify(String(p.task ?? "")).replace(/\\"/g, "\\\\\"");
+				return `{ key: ${JSON.stringify(`${chainName}-step-${i}-${j}`)}, ...${JSON.stringify(child)}, task: ${t}.replaceAll("{previous}", previous).replaceAll("{task}", task) }`;
+			}).join(", ");
+			lines.push(`const step${i} = await runs.all([${items}]);`);
+			lines.push(`previous = step${i}.map(r => r.output).join("\\n");`);
+		} else {
+			const child: Record<string, unknown> = { agent: step.agent ?? "delegate" };
+			if (step.model) child.model = step.model;
+			if (step.skill !== undefined) child.skill = step.skill;
+			if (step.context) child.context = step.context;
+			if (step.cwd) child.cwd = step.cwd;
+			const t = JSON.stringify(String(step.task ?? "")).replace(/\\"/g, "\\\\\"");
+			lines.push(`const step${i} = await runs.run(${JSON.stringify(`${chainName}-step-${i}`)}, { ...${JSON.stringify(child)}, task: ${t}.replaceAll("{previous}", previous).replaceAll("{task}", task) });`);
+			lines.push(`previous = step${i}.output;`);
+		}
+	}
+	lines.push("return previous;");
+	return lines.join("\n");
+}
+
 export function registerSlashCommands(
 	pi: ExtensionAPI,
 	state: SubagentState,
@@ -687,6 +729,29 @@ export function registerSlashCommands(
 			if (inline.thinking !== undefined) child.thinking = inline.thinking;
 			if (fork) child.context = "fork";
 			launchSlashSubagent(pi, ctx, { workflowScript: slashRunWorkflowScript("run", child), async: bg ? true : false });
+		},
+	});
+
+	pi.registerCommand("run-chain", {
+		description: "Run a saved chain: /run-chain <name> [task] [--bg]",
+		getArgumentCompletions: makeChainCompletions(state),
+		handler: async (args, ctx) => {
+			const { args: cleanedArgs, bg } = extractExecutionFlags(args);
+			const input = cleanedArgs.trim();
+			const firstSpace = input.indexOf(" ");
+			const chainName = firstSpace === -1 ? input : input.slice(0, firstSpace);
+			const task = firstSpace === -1 ? "" : input.slice(firstSpace + 1).trim();
+
+			if (!chainName) { ctx.ui.notify("Usage: /run-chain <name> [task] [--bg]", "error"); return; }
+			if (!state.baseCwd) { ctx.ui.notify("Subagent session cwd is not initialized yet", "error"); return; }
+
+			const { chains } = discoverAgentsAll(state.baseCwd);
+			const chain = chains.find((c) => c.name === chainName);
+			if (!chain) { ctx.ui.notify(`Unknown chain: ${chainName}`, "error"); return; }
+
+			const chainDir = path.dirname(chain.filePath);
+			const script = slashChainWorkflowScript(chain.name, chainDir, chain.steps as Array<Record<string, unknown>>, task || "Run the chain.");
+			launchSlashSubagent(pi, ctx, { workflowScript: script, async: bg ? true : false });
 		},
 	});
 
